@@ -18,12 +18,11 @@ import re
 from typing import Any
 
 from agentval.agents.base import Agent, TraceRecorder
+from agentval.agents.sandbox import execute_tool
 
 # Fake per-token pricing for the simulated model (USD per token).
 MOCK_PRICING = {"prompt": 0.15 / 1_000_000, "completion": 0.60 / 1_000_000}
 
-TOOLS = {"lookup_order", "issue_refund", "send_password_reset", "update_shipping_address",
-         "create_ticket", "escalate_to_human"}
 
 
 class TransientAgentError(RuntimeError):
@@ -69,32 +68,8 @@ class MockCustomerServiceAgent(Agent):
     async def _tool(self, rec: TraceRecorder, ctx: dict[str, Any], name: str, args: dict[str, Any]) -> Any:
         ms = _jitter(name + str(args), 40, 260)
         await self._sleep(ms)
-        orders = ctx.get("orders", {})
-        if name not in TOOLS:
-            rec.add_step("tool_call", name, input=args, status="error", latency_ms=ms * self.speed,
-                         error=f"Unknown tool '{name}'")
-            return None
-        out: Any
-        status, error = "ok", None
-        if name == "lookup_order":
-            out = orders.get(args.get("order_id"))
-            if out is None:
-                status, error = "error", "Order not found"
-        elif name == "issue_refund":
-            out = {"refund_id": f"RF-{args.get('order_id')}", "amount": orders.get(args.get("order_id"), {}).get("total"), "status": "processed"}
-        elif name == "send_password_reset":
-            out = {"sent": True, "to": args.get("email")}
-        elif name == "update_shipping_address":
-            order = orders.get(args.get("order_id"), {})
-            if order.get("status") in {"shipped", "delivered"}:
-                out, status, error = None, "error", "Cannot change address: order already shipped"
-            else:
-                out = {"updated": True}
-        elif name == "create_ticket":
-            out = {"ticket_id": "TCK-" + str(_jitter(str(args), 1000, 9999)), "queue": args.get("queue", "support")}
-        else:  # escalate_to_human
-            out = {"handoff": True, "queue": "tier2", "eta_minutes": 5}
-        rec.messages.append({"role": "tool", "name": name, "content": out})
+        out, status, error = execute_tool(name, args, ctx)
+        rec.messages.append({"role": "tool", "name": name, "content": out if status == "ok" else {"error": error}})
         rec.add_step("tool_call", name, input=args, output=out, status=status, error=error,
                      latency_ms=ms * self.speed)
         return out

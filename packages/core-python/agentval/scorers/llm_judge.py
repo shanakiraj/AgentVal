@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import random
 import re
 from typing import Any, Awaitable, Callable
 
@@ -112,12 +115,30 @@ class LLMJudgeScorer(Scorer):
         if completion is None:
             import litellm  # lazy: heavy import, only needed for real judges
 
+            litellm.suppress_debug_info = True
             completion = litellm.acompletion
-        response = await completion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=self.params.get("temperature", 0),
-        )
-        text = response["choices"][0]["message"]["content"] if isinstance(response, dict) else response.choices[0].message.content
-        score, rationale = parse_judge_response(text or "")
-        return self.result(score, rationale, judge=model)
+        retries = int(self.params.get("retries", 3))
+        base_delay = float(self.params.get("retry_base_delay", 4.0))
+        last_error = ""
+        for attempt in range(retries + 1):
+            try:
+                response = await completion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=self.params.get("temperature", 0),
+                    max_tokens=self.params.get("max_tokens", 1024),
+                )
+                text = (response["choices"][0]["message"]["content"] if isinstance(response, dict)
+                        else response.choices[0].message.content)
+                score, rationale = parse_judge_response(text or "")
+                return self.result(score, rationale, judge=model, attempts=attempt + 1)
+            except Exception as exc:  # rate limit, provider error or unparseable verdict
+                last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+                logging.getLogger("agentval.scorers").warning("judge %s attempt %d failed: %s", model, attempt + 1,
+                                                              type(exc).__name__)
+                if attempt < retries:
+                    await asyncio.sleep(base_delay * (2**attempt) * (1 + random.random() * 0.25))
+        # A judge outage must not silently score the agent 0: exclude this scorer for the case.
+        res = self.skip(f"Judge unavailable after {retries + 1} attempts ({last_error})")
+        res.details = {"judge": model, "error": last_error}
+        return res

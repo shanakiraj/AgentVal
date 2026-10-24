@@ -46,7 +46,7 @@
             }
           }
         ],
-        "max_steps": 2,
+        "max_steps": 3,
         "schema": {
           "type": "object",
           "required": [
@@ -133,7 +133,7 @@
             }
           }
         ],
-        "max_steps": 3,
+        "max_steps": 5,
         "schema": {
           "type": "object",
           "required": [
@@ -204,7 +204,7 @@
             }
           }
         ],
-        "max_steps": 2,
+        "max_steps": 3,
         "schema": {
           "type": "object",
           "required": [
@@ -293,7 +293,7 @@
             }
           }
         ],
-        "max_steps": 3,
+        "max_steps": 5,
         "schema": {
           "type": "object",
           "required": [
@@ -375,7 +375,7 @@
             "name": "escalate_to_human"
           }
         ],
-        "max_steps": 2,
+        "max_steps": 3,
         "schema": {
           "type": "object",
           "required": [

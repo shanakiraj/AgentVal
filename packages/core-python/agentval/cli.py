@@ -202,6 +202,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import logging
+
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s: %(message)s")
     args = build_parser().parse_args(argv)
     return int(args.func(args) or 0)
 
