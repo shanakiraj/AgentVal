@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { DataSourceBanner } from "@/components/data-source-banner";
 import { PageHeader } from "@/components/page-header";
+import { RunMatrix } from "@/components/run-matrix";
 import { ResultBadge, RunBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,26 +59,87 @@ function RunPicker({ name, runs, value, label }: { name: string; runs: Run[]; va
   );
 }
 
-export default async function ComparePage({ searchParams }: { searchParams: Promise<{ a?: string; b?: string }> }) {
+function defaultPair(runs: Run[]): [string | undefined, string | undefined] {
+  const done = runs.filter((r) => r.metrics);
+  const real = done.filter((r) => !(r.model ?? "").startsWith("mock"));
+  const pool = (real.length >= 2 ? real : done).slice().sort((x, y) => y.metrics!.avgScore - x.metrics!.avgScore);
+  if (pool.length >= 2) return [pool[1].id, pool[0].id]; // A = runner-up, B = leader
+  return [runs[1]?.id, runs[0]?.id];
+}
+
+type SP = { a?: string; b?: string; runs?: string | string[] };
+
+export default async function ComparePage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const { data: runs, source, reason } = await getRuns();
-  // Default: A = previous run (baseline), B = newest run (candidate).
-  const bId = sp.b ?? (sp.a ? runs.find((r) => r.id !== sp.a)?.id : runs[0]?.id);
-  const aId = sp.a ?? runs.find((r) => r.id !== bId)?.id;
+  const [defA, defB] = defaultPair(runs);
+  const bId = sp.b ?? (sp.a ? runs.find((r) => r.id !== sp.a)?.id : defB);
+  const aId = sp.a ?? (sp.b ? runs.find((r) => r.id !== bId)?.id : defA);
   const [a, b] = await Promise.all([aId ? getRun(aId) : null, bId ? getRun(bId) : null]);
   const cmp = a && b ? compareRuns(a.data, b.data) : null;
+
+  // Multi-run matrix: explicit ?runs=… selection, else every completed run on the same dataset as B.
+  const datasetId = b?.data.datasetId ?? runs[0]?.datasetId;
+  const sameDataset = runs.filter((r) => r.datasetId === datasetId && r.status === "COMPLETED");
+  const picked = sp.runs ? (Array.isArray(sp.runs) ? sp.runs : sp.runs.split(",")) : sameDataset.map((r) => r.id);
+  const matrixRuns = (
+    await Promise.all(sameDataset.filter((r) => picked.includes(r.id)).map((r) => getRun(r.id)))
+  ).map((x) => x.data);
+  const pairHref = (x: string, y: string) => `/compare?a=${x}&b=${y}#pair`;
 
   return (
     <>
       <PageHeader
         title="Compare runs"
-        description="Side-by-side metric deltas between two evaluation runs. Green means Run B is better."
+        description="Leaderboard and per-case matrix across many runs, plus a detailed A/B diff of any two runs."
+        actions={
+          <div className="flex gap-3 text-sm">
+            <a href="#matrix" className="text-blue-400 hover:underline">
+              Multi-run
+            </a>
+            <a href="#pair" className="text-blue-400 hover:underline">
+              A/B diff
+            </a>
+          </div>
+        }
       />
       <DataSourceBanner source={source} reason={reason} />
 
+      {sameDataset.length >= 2 && (
+        <section id="matrix" className="scroll-mt-6 space-y-4">
+          <Card className="bg-slate-900/30">
+            <CardContent>
+              <form className="space-y-3">
+                <input type="hidden" name="a" value={aId} />
+                <input type="hidden" name="b" value={bId} />
+                <div className="text-xs text-slate-400">Runs in the matrix ({sameDataset[0]?.datasetName})</div>
+                <div className="flex flex-wrap gap-2">
+                  {sameDataset.map((r) => (
+                    <label
+                      key={r.id}
+                      className="flex items-center gap-2 rounded-md border border-slate-800 px-2 py-1 text-xs hover:border-slate-600"
+                    >
+                      <input type="checkbox" name="runs" value={r.id} defaultChecked={picked.includes(r.id)} className="accent-blue-500" />
+                      <span className="max-w-64 truncate">{r.name}</span>
+                      <span className="text-slate-500">{r.metrics ? pct(r.metrics.passRate) : ""}</span>
+                    </label>
+                  ))}
+                </div>
+                <Button type="submit" variant="outline" size="sm">
+                  Update matrix
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+          {matrixRuns.length > 0 && <RunMatrix runs={matrixRuns} pairHref={pairHref} />}
+        </section>
+      )}
+
+      <section id="pair" className="scroll-mt-6 space-y-4">
+      <h2 className="pt-2 text-lg font-semibold tracking-tight">A/B diff</h2>
       <Card className="bg-slate-900/30">
         <CardContent>
-          <form className="flex flex-col gap-3 md:flex-row md:items-end">
+          <form className="flex flex-col gap-3 md:flex-row md:items-end" action="/compare#pair">
             <RunPicker name="a" label="Run A (baseline)" runs={runs} value={aId} />
             <ArrowRight className="mb-2 hidden size-4 text-slate-500 md:block" />
             <RunPicker name="b" label="Run B (candidate)" runs={runs} value={bId} />
@@ -237,6 +299,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
           </Card>
         </>
       )}
+      </section>
     </>
   );
 }
