@@ -1,0 +1,3 @@
+"""AgentVal: Agent Validation & Evaluation Studio (core engine)."""
+
+__version__ = "0.1.0"
