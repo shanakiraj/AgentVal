@@ -138,6 +138,28 @@ incl. traces), `--concurrency N`, `--name`. Other commands: `agentval seed`, `ag
   `anthropic/claude-3-5-sonnet-20240620`, `ollama/llama3`), or `your.module:YourAgent` (subclass of `agentval.agents.Agent`).
 - Status per case: **PASS** if weighted score ≥ `pass_threshold`, **PARTIAL** if ≥ `partial_threshold`, **FAIL** otherwise, **ERROR** if the agent failed after all retries.
 
+### Free OpenRouter models
+
+`packages/core-python/agentval/sample_data/configs/openrouter-*.json` run the sample dataset against
+free OpenRouter models through LiteLLM (`openrouter/<model-id>:free`), using a store-policy system
+prompt and the shared customer-service tool sandbox (the same simulated backend the mock agent uses).
+The LLM judge for these runs is `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` for every model
+(the two mock runs keep the offline mock judge). The bundled demo data includes real results for
+Poolside Laguna S 2.1, Cohere North Mini Code and NVIDIA Nemotron 3.5 Super VL. `max_steps` budgets in the
+sample dataset count every LLM turn, including the final answer, so real tool-calling agents are not penalized.
+
+```bash
+export OPENROUTER_API_KEY=...   # read by LiteLLM from the environment; never stored by AgentVal
+agentval run --dataset sample --config openrouter-nvidia-nemotron-super-vl
+```
+
+Free models are rate limited (about 20 requests/min and upstream throttling), so these configs use
+`concurrency: 1`. Rate-limit errors are retried per model call with exponential backoff, and then
+per test case by the runner. Cost is reported as $0 for `:free` models. If the judge is unavailable
+after its retries, `llm_judge` is marked *skipped* for that case instead of scoring 0. Free-model
+availability changes often: list the current ones with
+`curl -s https://openrouter.ai/api/v1/models | jq -r '.data[] | select(.id | endswith(":free")) | .id'`.
+
 ### Dataset format
 
 ```json
@@ -218,7 +240,7 @@ the message history and any retry attempts.
 | `/runs` | All runs: pass rate, avg score, latency, cost, tokens, plus a per-model comparison |
 | `/runs/[id]` | Metric cards, scorer breakdown, per-test-case table with Pass/Partial/Fail badges; live progress while running |
 | `/runs/[id]/trace/[resultId]` | React Flow trajectory graph (inputs, LLM calls, tool calls, outputs, errors), step inspector, scores and actual vs expected |
-| `/compare?a=&b=` | Side-by-side run comparison with colored metric deltas and per-case regressions |
+| `/compare` | Multi-run leaderboard + test-case × run matrix (pick any runs with `?runs=`), and an A/B diff (`?a=&b=`) with colored metric deltas and per-case regressions |
 
 ## Deploying the web app to Vercel
 
@@ -255,7 +277,7 @@ Note: run progress in the studio refreshes by polling; the API also exposes an S
 ## Testing
 
 ```bash
-cd packages/core-python && pytest -q          # 41 tests: scorers, runner, API (SQLite), CLI
+cd packages/core-python && pytest -q          # scorers, runner, LiteLLM agent (faked), API (SQLite), CLI
 AGENTVAL_TEST_DATABASE_URL=postgresql://… pytest -q   # same suite against Postgres
 cd apps/web && npm run typecheck && npm run lint && npm run build
 ```
