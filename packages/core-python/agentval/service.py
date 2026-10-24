@@ -211,7 +211,7 @@ def compare_runs(session: Session, run_a: EvalRun, run_b: EvalRun) -> schemas.Co
 
 
 # ----------------------------------------------------------------------------- seed
-async def seed_sample(speed: float = 0.3) -> dict[str, Any]:
+async def seed_sample(speed: float = 1.0) -> dict[str, Any]:
     """Create the sample dataset and two demo runs (baseline vs improved mock agent)."""
     with session_scope() as s:
         ds = import_dataset_file(s, SAMPLE_DATASET)

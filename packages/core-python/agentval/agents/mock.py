@@ -62,7 +62,7 @@ class MockCustomerServiceAgent(Agent):
         pt, ct = _tokens(prompt) + 220, _tokens(thought) + 15
         cost = pt * MOCK_PRICING["prompt"] + ct * MOCK_PRICING["completion"]
         rec.messages.append({"role": "assistant", "content": thought})
-        rec.add_step("llm", name, input={"prompt": prompt[:500]}, output=thought, latency_ms=ms,
+        rec.add_step("llm", name, input={"prompt": prompt[:500]}, output=thought, latency_ms=ms * self.speed,
                      prompt_tokens=pt, completion_tokens=ct, cost_usd=cost,
                      attributes={"gen_ai.request.model": self.model})
 
@@ -71,7 +71,7 @@ class MockCustomerServiceAgent(Agent):
         await self._sleep(ms)
         orders = ctx.get("orders", {})
         if name not in TOOLS:
-            rec.add_step("tool_call", name, input=args, status="error", latency_ms=ms,
+            rec.add_step("tool_call", name, input=args, status="error", latency_ms=ms * self.speed,
                          error=f"Unknown tool '{name}'")
             return None
         out: Any
@@ -95,7 +95,8 @@ class MockCustomerServiceAgent(Agent):
         else:  # escalate_to_human
             out = {"handoff": True, "queue": "tier2", "eta_minutes": 5}
         rec.messages.append({"role": "tool", "name": name, "content": out})
-        rec.add_step("tool_call", name, input=args, output=out, status=status, error=error, latency_ms=ms)
+        rec.add_step("tool_call", name, input=args, output=out, status=status, error=error,
+                     latency_ms=ms * self.speed)
         return out
 
     # ------------------------------------------------------------------ main loop

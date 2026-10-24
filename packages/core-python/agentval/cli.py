@@ -184,7 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("seed", help="Load the sample dataset and create two demo runs")
     s.add_argument("--db")
-    s.add_argument("--speed", type=float, default=0.3, help="Mock agent latency multiplier")
+    s.add_argument("--speed", type=float, default=1.0, help="Mock agent latency multiplier")
     s.set_defaults(func=cmd_seed)
 
     v = sub.add_parser("serve", help="Start the API server")

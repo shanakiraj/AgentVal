@@ -59,8 +59,9 @@ class TraceRecorder:
             "status": status,
             "error": error,
             "latencyMs": round(latency_ms, 2),
-            "startTimeUnixNano": start,
-            "endTimeUnixNano": end,
+            # OTLP/JSON encodes 64-bit nanosecond timestamps as strings
+            "startTimeUnixNano": str(start),
+            "endTimeUnixNano": str(end),
             "tokens": {"prompt": prompt_tokens, "completion": completion_tokens},
             "costUsd": cost_usd,
             "attributes": attributes or {},
