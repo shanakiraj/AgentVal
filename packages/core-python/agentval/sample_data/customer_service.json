@@ -1,0 +1,415 @@
+{
+  "name": "Customer Service Agent Evaluation",
+  "description": "Five realistic support conversations (order status, refunds, account access, shipping policy, escalation) that test final answers, output schema, tone/policy and tool-use trajectory.",
+  "testCases": [
+    {
+      "name": "Order status lookup",
+      "input": {
+        "prompt": "Hi, where is my order A1001? It was supposed to arrive already.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "A1001": {
+              "order_id": "A1001",
+              "status": "shipped",
+              "carrier": "UPS",
+              "tracking": "1Z999AA10123456784",
+              "eta": "Thursday",
+              "total": 129.0
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ]
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "shipped",
+          "1Z999AA10123456784"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "A1001"
+            }
+          }
+        ],
+        "max_steps": 2,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "order_status",
+        "difficulty": "easy"
+      }
+    },
+    {
+      "name": "Refund for damaged item",
+      "input": {
+        "prompt": "My order B2002 arrived damaged. I want a refund please.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "B2002": {
+              "order_id": "B2002",
+              "status": "delivered",
+              "carrier": "FedEx",
+              "tracking": "7712 3456 7890",
+              "eta": "delivered",
+              "total": 49.99
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ]
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "refund",
+          "49.99",
+          "3-5 business days"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "B2002"
+            }
+          },
+          {
+            "name": "issue_refund",
+            "args": {
+              "order_id": "B2002"
+            }
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "refund",
+        "difficulty": "medium"
+      }
+    },
+    {
+      "name": "Password reset",
+      "input": {
+        "prompt": "I can't log in to my account. My email is jamie@example.com.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {}
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ]
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "reset link",
+          "jamie@example.com"
+        ],
+        "tool_calls": [
+          {
+            "name": "send_password_reset",
+            "args": {
+              "email": "jamie@example.com"
+            }
+          }
+        ],
+        "max_steps": 2,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "account",
+        "difficulty": "easy"
+      }
+    },
+    {
+      "name": "Address change after shipment",
+      "input": {
+        "prompt": "Can you change the shipping address on order C3003? I moved last week.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "C3003": {
+              "order_id": "C3003",
+              "status": "shipped",
+              "carrier": "USPS",
+              "tracking": "9400 1000 0000 0000 0000 00",
+              "eta": "Monday",
+              "total": 15.5
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ]
+      },
+      "expected": {
+        "resolution": "escalated",
+        "reply_contains": [
+          "already shipped",
+          "ticket"
+        ],
+        "reply_must_not_contain": [
+          "updated the shipping address"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "C3003"
+            }
+          },
+          {
+            "name": "create_ticket",
+            "args": {
+              "order_id": "C3003"
+            }
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "shipping",
+        "difficulty": "hard",
+        "policy": "no address changes after shipment"
+      }
+    },
+    {
+      "name": "Angry customer escalation",
+      "input": {
+        "prompt": "This is unacceptable! It's the third time order D4004 is late. I'm talking to my lawyer.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "D4004": {
+              "order_id": "D4004",
+              "status": "delayed",
+              "carrier": "UPS",
+              "tracking": "1Z999AA10123456785",
+              "eta": "unknown",
+              "total": 310.0
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ]
+      },
+      "expected": {
+        "resolution": "escalated",
+        "reply_contains": [
+          "sorry",
+          "escalated",
+          "senior specialist"
+        ],
+        "reply_must_not_contain": [
+          "calm down"
+        ],
+        "tool_calls": [
+          {
+            "name": "escalate_to_human"
+          }
+        ],
+        "max_steps": 2,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "escalation",
+        "difficulty": "hard"
+      }
+    }
+  ]
+}
