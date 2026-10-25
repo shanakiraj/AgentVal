@@ -1,0 +1,884 @@
+{
+  "name": "Grounded Policy QA (RAG)",
+  "description": "Help-center questions the agent must answer from a retrieved knowledge base. Designed to catch hallucinated numbers, stale documents and failure to abstain when the answer is not in the KB.",
+  "testCases": [
+    {
+      "name": "Return window",
+      "input": {
+        "prompt": "How many days do I have to return a jacket I bought?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "30 days"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "easy",
+        "tags": [
+          "retrieval",
+          "single-hop"
+        ],
+        "rationale": "Baseline retrieval: one article answers the question."
+      }
+    },
+    {
+      "name": "International shipping cost",
+      "input": {
+        "prompt": "Do you ship to Canada and how much does it cost?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "$19.99",
+          "7-14 business days"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "easy",
+        "tags": [
+          "retrieval",
+          "numbers"
+        ],
+        "rationale": "Two numeric facts must be copied exactly from the article."
+      }
+    },
+    {
+      "name": "Warranty coverage",
+      "input": {
+        "prompt": "My headphones stopped working after 13 months. Are they still under warranty?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "2 years",
+          "manufacturing defects"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "medium",
+        "tags": [
+          "retrieval",
+          "reasoning"
+        ],
+        "rationale": "Requires applying the policy (13 months < 2 years) not just quoting it."
+      }
+    },
+    {
+      "name": "Conflicting price-match docs",
+      "input": {
+        "prompt": "I found it cheaper elsewhere 10 days after buying. Will you match the price?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "14 days"
+        ],
+        "reply_must_not_contain": [
+          "7 days"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "hard",
+        "tags": [
+          "retrieval",
+          "stale-context",
+          "conflict"
+        ],
+        "rationale": "Two articles disagree; the agent must prefer the most recently updated one."
+      }
+    },
+    {
+      "name": "Unanswerable: loyalty points",
+      "input": {
+        "prompt": "How many loyalty points do I earn per dollar spent?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "needs_info",
+        "must_abstain": true,
+        "reply_must_not_contain": [
+          "points per dollar"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 4,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "hard",
+        "tags": [
+          "hallucination",
+          "abstention"
+        ],
+        "rationale": "The KB has no loyalty article: the only correct answer is to say so."
+      }
+    },
+    {
+      "name": "Gift card expiry",
+      "input": {
+        "prompt": "Do gift cards expire? Can I cash one out?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "kb": [
+            {
+              "id": "KB-101",
+              "title": "Returns policy",
+              "updated": "2026-03-01",
+              "keywords": [
+                "return",
+                "returns",
+                "exchange"
+              ],
+              "text": "Unworn items can be returned within 30 days of delivery for a full refund. Final-sale items cannot be returned."
+            },
+            {
+              "id": "KB-102",
+              "title": "International shipping",
+              "updated": "2026-01-15",
+              "keywords": [
+                "international",
+                "abroad",
+                "overseas",
+                "canada",
+                "shipping",
+                "ship"
+              ],
+              "text": "We ship to 42 countries. International shipping is a flat $19.99 and takes 7-14 business days."
+            },
+            {
+              "id": "KB-103",
+              "title": "Electronics warranty",
+              "updated": "2026-02-10",
+              "keywords": [
+                "warranty",
+                "electronics",
+                "headphones",
+                "broken",
+                "defective"
+              ],
+              "text": "Electronics include a 2 years limited warranty covering manufacturing defects. Accidental damage is not covered."
+            },
+            {
+              "id": "KB-104",
+              "title": "Price match (legacy)",
+              "updated": "2024-06-01",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "We match competitor prices within 7 days of purchase."
+            },
+            {
+              "id": "KB-105",
+              "title": "Price match (current)",
+              "updated": "2026-04-20",
+              "keywords": [
+                "price",
+                "match",
+                "cheaper",
+                "lower"
+              ],
+              "text": "Since April 2026 we match competitor prices within 14 days of purchase, excluding marketplace sellers."
+            },
+            {
+              "id": "KB-106",
+              "title": "Gift cards",
+              "updated": "2025-11-02",
+              "keywords": [
+                "gift",
+                "card",
+                "giftcard"
+              ],
+              "text": "Gift cards never expire and cannot be redeemed for cash."
+            }
+          ]
+        },
+        "tools": [
+          "search_kb",
+          "lookup_order",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the help-center assistant for an online store. Always call search_kb before answering a policy question and answer ONLY with facts from the returned articles, quoting numbers exactly. If articles conflict, trust the one with the most recent 'updated' date. If the knowledge base does not contain the answer, say you don't have that information and set resolution to \"needs_info\". Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "never expire",
+          "cannot be redeemed for cash"
+        ],
+        "tool_calls": [
+          {
+            "name": "search_kb"
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "rag",
+        "difficulty": "medium",
+        "tags": [
+          "retrieval",
+          "multi-part"
+        ],
+        "rationale": "Two-part question: both halves must be answered from the same article."
+      }
+    }
+  ]
+}

@@ -79,7 +79,11 @@
       },
       "metadata": {
         "category": "order_status",
-        "difficulty": "easy"
+        "difficulty": "easy",
+        "tags": [
+          "single-tool",
+          "lookup"
+        ]
       }
     },
     {
@@ -166,7 +170,11 @@
       },
       "metadata": {
         "category": "refund",
-        "difficulty": "medium"
+        "difficulty": "medium",
+        "tags": [
+          "verify-then-act",
+          "multi-tool"
+        ]
       }
     },
     {
@@ -237,7 +245,11 @@
       },
       "metadata": {
         "category": "account",
-        "difficulty": "easy"
+        "difficulty": "easy",
+        "tags": [
+          "single-tool",
+          "account"
+        ]
       }
     },
     {
@@ -327,7 +339,11 @@
       "metadata": {
         "category": "shipping",
         "difficulty": "hard",
-        "policy": "no address changes after shipment"
+        "policy": "no address changes after shipment",
+        "tags": [
+          "policy",
+          "verify-then-act"
+        ]
       }
     },
     {
@@ -408,7 +424,11 @@
       },
       "metadata": {
         "category": "escalation",
-        "difficulty": "hard"
+        "difficulty": "hard",
+        "tags": [
+          "tone",
+          "escalation"
+        ]
       }
     }
   ]

@@ -1,0 +1,481 @@
+{
+  "name": "Multi-step Operations",
+  "description": "Multi-intent requests that need several dependent tool calls in the right order, plus error recovery when a lookup fails. Scored mainly on trajectory correctness and efficiency.",
+  "testCases": [
+    {
+      "name": "Two orders, two intents",
+      "input": {
+        "prompt": "Order F6006 arrived damaged and G7007 still hasn't shown up. Can you help with both?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "F6006": {
+              "order_id": "F6006",
+              "status": "delivered",
+              "carrier": "UPS",
+              "tracking": "1Z11100022223333",
+              "eta": "delivered",
+              "total": 72.0,
+              "customer_email": "jamie@example.com"
+            },
+            "G7007": {
+              "order_id": "G7007",
+              "status": "shipped",
+              "carrier": "FedEx",
+              "tracking": "7799 0000 1111",
+              "eta": "Saturday",
+              "total": 18.0,
+              "customer_email": "jamie@example.com"
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the customer service agent for an online store. Use tools to act; never invent order details. Handle every request in the message. Always lookup_order before changing or refunding an order. Damaged items: issue_refund. Missing items from a delivered box: create_ticket with queue \"missing_item\" (resolution \"escalated\"). Address changes are allowed only before shipment via update_shipping_address. Locked-out customers: send_password_reset. If an order cannot be found, ask the customer to confirm the order number (resolution \"needs_info\"). Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "72",
+          "7799 0000 1111"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "F6006"
+            }
+          },
+          {
+            "name": "issue_refund",
+            "args": {
+              "order_id": "F6006"
+            }
+          },
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "G7007"
+            }
+          }
+        ],
+        "max_steps": 6,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "operations",
+        "difficulty": "hard",
+        "tags": [
+          "multi-intent",
+          "multi-tool"
+        ],
+        "rationale": "Both intents must be handled; agents often stop after the first."
+      }
+    },
+    {
+      "name": "Address change before shipment",
+      "input": {
+        "prompt": "Please change the address on order P8080 to 42 Elm St, Springfield.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "P8080": {
+              "order_id": "P8080",
+              "status": "processing",
+              "carrier": "UPS",
+              "tracking": "pending",
+              "eta": "next week",
+              "total": 54.0,
+              "customer_email": "jamie@example.com"
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the customer service agent for an online store. Use tools to act; never invent order details. Handle every request in the message. Always lookup_order before changing or refunding an order. Damaged items: issue_refund. Missing items from a delivered box: create_ticket with queue \"missing_item\" (resolution \"escalated\"). Address changes are allowed only before shipment via update_shipping_address. Locked-out customers: send_password_reset. If an order cannot be found, ask the customer to confirm the order number (resolution \"needs_info\"). Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "42 Elm St"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "P8080"
+            }
+          },
+          {
+            "name": "update_shipping_address",
+            "args": {
+              "order_id": "P8080"
+            }
+          }
+        ],
+        "max_steps": 4,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "operations",
+        "difficulty": "medium",
+        "tags": [
+          "verify-then-act"
+        ],
+        "rationale": "Check-then-act: the status lookup must precede the write."
+      }
+    },
+    {
+      "name": "Missing item in delivered box",
+      "input": {
+        "prompt": "My order Q9090 was delivered but the charger was missing from the box.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "Q9090": {
+              "order_id": "Q9090",
+              "status": "delivered",
+              "carrier": "USPS",
+              "tracking": "9400 5555 6666",
+              "eta": "delivered",
+              "total": 129.0,
+              "customer_email": "jamie@example.com"
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the customer service agent for an online store. Use tools to act; never invent order details. Handle every request in the message. Always lookup_order before changing or refunding an order. Damaged items: issue_refund. Missing items from a delivered box: create_ticket with queue \"missing_item\" (resolution \"escalated\"). Address changes are allowed only before shipment via update_shipping_address. Locked-out customers: send_password_reset. If an order cannot be found, ask the customer to confirm the order number (resolution \"needs_info\"). Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "escalated",
+        "reply_contains": [
+          "ticket"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "Q9090"
+            }
+          },
+          {
+            "name": "create_ticket",
+            "args": {
+              "order_id": "Q9090"
+            }
+          }
+        ],
+        "max_steps": 4,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "operations",
+        "difficulty": "medium",
+        "tags": [
+          "ticketing",
+          "verify-then-act"
+        ],
+        "rationale": "Partial-delivery issues go to a specialist queue rather than an automatic refund."
+      }
+    },
+    {
+      "name": "Unknown order id",
+      "input": {
+        "prompt": "Where is my order Z9999?",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "A1001": {
+              "order_id": "A1001",
+              "status": "shipped",
+              "carrier": "UPS",
+              "tracking": "1Z999AA10123456784",
+              "eta": "Thursday",
+              "total": 129.0,
+              "customer_email": "jamie@example.com"
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the customer service agent for an online store. Use tools to act; never invent order details. Handle every request in the message. Always lookup_order before changing or refunding an order. Damaged items: issue_refund. Missing items from a delivered box: create_ticket with queue \"missing_item\" (resolution \"escalated\"). Address changes are allowed only before shipment via update_shipping_address. Locked-out customers: send_password_reset. If an order cannot be found, ask the customer to confirm the order number (resolution \"needs_info\"). Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "needs_info",
+        "reply_must_not_contain": [
+          "on its way",
+          "arriving"
+        ],
+        "forbidden_tools": [
+          "issue_refund"
+        ],
+        "tool_calls": [
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "Z9999"
+            },
+            "expect_error": true
+          }
+        ],
+        "max_steps": 3,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "operations",
+        "difficulty": "medium",
+        "tags": [
+          "error-recovery",
+          "hallucination"
+        ],
+        "rationale": "A failed lookup must lead to a clarifying question, not an invented status."
+      }
+    },
+    {
+      "name": "Password reset + order status",
+      "input": {
+        "prompt": "I can't log in (jamie@example.com) and I also need to know where order H8008 is.",
+        "context": {
+          "customer": {
+            "name": "Jamie Rivera",
+            "email": "jamie@example.com",
+            "tier": "gold"
+          },
+          "orders": {
+            "H8008": {
+              "order_id": "H8008",
+              "status": "shipped",
+              "carrier": "DHL",
+              "tracking": "JD0146000088",
+              "eta": "Monday",
+              "total": 40.0,
+              "customer_email": "jamie@example.com"
+            }
+          }
+        },
+        "tools": [
+          "lookup_order",
+          "issue_refund",
+          "send_password_reset",
+          "update_shipping_address",
+          "create_ticket",
+          "escalate_to_human"
+        ],
+        "system": "You are the customer service agent for an online store. Use tools to act; never invent order details. Handle every request in the message. Always lookup_order before changing or refunding an order. Damaged items: issue_refund. Missing items from a delivered box: create_ticket with queue \"missing_item\" (resolution \"escalated\"). Address changes are allowed only before shipment via update_shipping_address. Locked-out customers: send_password_reset. If an order cannot be found, ask the customer to confirm the order number (resolution \"needs_info\"). Reply with ONLY a JSON object, no prose and no code fences: {\"reply\": str, \"resolution\": \"resolved\"|\"escalated\"|\"needs_info\", \"actions\": [str]}."
+      },
+      "expected": {
+        "resolution": "resolved",
+        "reply_contains": [
+          "reset link",
+          "JD0146000088"
+        ],
+        "tool_calls": [
+          {
+            "name": "send_password_reset",
+            "args": {
+              "email": "jamie@example.com"
+            }
+          },
+          {
+            "name": "lookup_order",
+            "args": {
+              "order_id": "H8008"
+            }
+          }
+        ],
+        "max_steps": 5,
+        "schema": {
+          "type": "object",
+          "required": [
+            "reply",
+            "resolution",
+            "actions"
+          ],
+          "properties": {
+            "reply": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolution": {
+              "type": "string",
+              "enum": [
+                "resolved",
+                "escalated",
+                "needs_info"
+              ]
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "metadata": {
+        "category": "operations",
+        "difficulty": "hard",
+        "tags": [
+          "multi-intent",
+          "multi-tool"
+        ],
+        "rationale": "Two unrelated intents in one message."
+      }
+    }
+  ]
+}

@@ -31,6 +31,7 @@
     "type": "mock",
     "variant": "improved",
     "model": "mock/cs-agent-v2",
-    "flaky": true
+    "flaky": true,
+    "slip_rate": 0.05
   }
 }

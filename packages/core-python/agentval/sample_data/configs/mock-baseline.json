@@ -30,6 +30,7 @@
   "agent": {
     "type": "mock",
     "variant": "baseline",
-    "model": "mock/cs-agent-v1"
+    "model": "mock/cs-agent-v1",
+    "slip_rate": 0.15
   }
 }

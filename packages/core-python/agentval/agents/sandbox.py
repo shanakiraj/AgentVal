@@ -35,14 +35,54 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                          {"order_id": _S, "queue": _S, "summary": _S}, ["queue", "summary"]),
     "escalate_to_human": _fn("escalate_to_human", "Hand the conversation to a senior human specialist.",
                              {"reason": _S, "priority": {"type": "string", "enum": ["low", "normal", "high"]}}, ["reason"]),
+    "search_kb": _fn("search_kb", "Search the help-center knowledge base. Returns the most relevant policy articles.",
+                     {"query": {**_S, "description": "Natural-language search query"}}, ["query"]),
 }
 
 TOOLS = set(TOOL_SCHEMAS)
+_STOP = {"the", "a", "an", "is", "of", "to", "for", "my", "i", "do", "you", "on", "in", "and", "can", "what", "how",
+         "it", "if", "me", "your", "are", "does", "with"}
+
+
+def search_kb(query: str, kb: list[dict[str, Any]], k: int = 2) -> list[dict[str, Any]]:
+    """Tiny deterministic BM25-flavoured retrieval over ``context.kb`` articles.
+
+    Terms are prefix-matched (``return`` matches ``returned``), weighted by inverse document
+    frequency, and hits in an article's title/keywords count double.
+    """
+    import math
+    import re
+
+    def toks(text: str) -> list[str]:
+        return re.findall(r"[a-z0-9]+", (text or "").lower())
+
+    def hit(term: str, words: list[str]) -> int:
+        return sum(1 for w in words if w.startswith(term) or term.startswith(w) and len(w) >= 4)
+
+    terms = [t for t in toks(query) if t not in _STOP and len(t) > 1]
+    docs = [(d, toks(f"{d.get('title', '')} {' '.join(d.get('keywords', []))}"), toks(d.get("text", ""))) for d in kb]
+    n = max(1, len(docs))
+    scored = []
+    for d, head, body in docs:
+        score = 0.0
+        for t in terms:
+            df = sum(1 for _, h, b in docs if hit(t, h) or hit(t, b))
+            if not df:
+                continue
+            idf = math.log(1 + n / df)
+            score += idf * (2 * min(1, hit(t, head)) + min(2, hit(t, body)) / (1 + 0.02 * len(body)))
+        if score > 0:
+            scored.append((score, d))
+    scored.sort(key=lambda x: (-x[0], x[1].get("id", "")))
+    return [{"id": d.get("id"), "title": d.get("title"), "text": d.get("text"), "updated": d.get("updated")}
+            for _, d in scored[:k]]
 
 
 def execute_tool(name: str, args: dict[str, Any], ctx: dict[str, Any]) -> tuple[Any, str, str | None]:
     """Run a sandbox tool. Returns ``(output, status, error)``; status is "ok" or "error"."""
     orders = ctx.get("orders", {})
+    if name == "search_kb":
+        return search_kb(args.get("query", ""), ctx.get("kb", [])), "ok", None
     if name not in TOOLS:
         return None, "error", f"Unknown tool '{name}'"
     if name == "lookup_order":
