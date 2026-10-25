@@ -19,7 +19,8 @@ class TrajectoryScorer(Scorer):
     """Scores the tool-call trajectory found in ``trace.steps`` (type == "tool_call").
 
     Expected (from test case ``expected``):
-      tool_calls: [{"name": str, "args": {...subset...}}, ...]   ordered golden calls
+      tool_calls: [{"name": str, "args": {...subset...}, "expect_error": bool}, ...]   ordered golden calls
+                  (``expect_error`` marks calls that legitimately fail, e.g. looking up an unknown order)
       max_steps:  int   step budget (LLM + tool steps)
 
     Components (weighted average):
@@ -49,9 +50,11 @@ class TrajectoryScorer(Scorer):
             {"name": s.get("name"), "args": (s.get("input") or {}), "status": s.get("status", "ok")}
             for s in tool_steps
         ]
+        expected_errors = {(ec.get("name")) for ec in (exp_calls or []) if ec.get("expect_error")}
         invalid = [
             c for c in actual_calls
-            if c["status"] == "error" or (available and c["name"] not in available)
+            if (c["status"] == "error" and c["name"] not in expected_errors)
+            or (available and c["name"] not in available)
         ]
 
         comps: dict[str, float] = {}
@@ -63,7 +66,8 @@ class TrajectoryScorer(Scorer):
                 for i, ac in enumerate(actual_calls):
                     if i in matched_actual:
                         continue
-                    if ac["name"] == ec.get("name") and ac["status"] != "error" and _args_match(ec.get("args"), ac["args"]):
+                    ok_status = ac["status"] != "error" or ec.get("expect_error")
+                    if ac["name"] == ec.get("name") and ok_status and _args_match(ec.get("args"), ac["args"]):
                         matched_actual.add(i)
                         hits.append(i)
                         break
