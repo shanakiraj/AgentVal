@@ -104,6 +104,7 @@ class EvalResult(SQLModel, table=True):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     attempts: int = 1
+    trial: int = 0  # repeat index when a run uses ``trials > 1`` (pass@k / consistency)
     error: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=utcnow)
 

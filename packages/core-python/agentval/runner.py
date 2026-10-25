@@ -17,8 +17,27 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel, Field
 
+from agentval import stats
 from agentval.agents.base import Agent, TraceRecorder, build_agent
 from agentval.scorers import Scorer, ScoreResult, ScoringContext, build_scorer
+
+
+def apply_scorer_preset(config: dict[str, Any], preset: str) -> dict[str, Any]:
+    """Replace the config's scorers with a preset, keeping its LLM-judge settings (model, rubric, weight)."""
+    judge = next((sp for sp in config.get("scorers", []) if isinstance(sp, dict) and sp.get("type") == "llm_judge"),
+                 {"type": "llm_judge", "weight": 2, "params": {"model": "mock"}})
+    core = [{"type": "exact_match", "params": {"field": "resolution"}}, {"type": "schema_match"}]
+    presets = {
+        "default": [*core, judge, {"type": "trajectory"}],
+        "full": [*core, {"type": "contains"}, {"type": "groundedness"}, {"type": "safety", "weight": 2},
+                 {"type": "trajectory"}, judge],
+        "deterministic": [*core, {"type": "contains"}, {"type": "groundedness"}, {"type": "safety", "weight": 2},
+                          {"type": "trajectory"}],
+    }
+    if preset not in presets:
+        raise ValueError(f"Unknown scorer preset '{preset}' (choose from: {', '.join(presets)})")
+    return {**config, "scorers": presets[preset]}
+
 
 
 class EvalConfig(BaseModel):
@@ -35,6 +54,7 @@ class EvalConfig(BaseModel):
         ]
     )
     concurrency: int = Field(default=4, ge=1, le=256)
+    trials: int = Field(default=1, ge=1, le=20, description="Repeat each case k times (pass@k, consistency)")
     max_retries: int = Field(default=2, ge=0, le=10)
     retry_base_delay: float = Field(default=0.5, ge=0)
     retry_max_delay: float = Field(default=8.0, ge=0)
@@ -68,6 +88,7 @@ class CaseOutcome:
     attempts: int
     error: str | None = None
     metadata: dict[str, Any] | None = field(default=None)
+    trial: int = 0
 
 
 ResultCallback = Callable[[CaseOutcome, int, int], Awaitable[None] | None]
@@ -109,7 +130,7 @@ async def _score_case(scorers: list[Scorer], ctx: ScoringContext) -> list[ScoreR
 
 
 async def run_case(agent: Agent, scorers: list[Scorer], case: CaseInput, cfg: EvalConfig,
-                   rng: random.Random | None = None) -> CaseOutcome:
+                   rng: random.Random | None = None, trial: int = 0) -> CaseOutcome:
     attempts = 0
     error: str | None = None
     actual: Any = None
@@ -160,6 +181,7 @@ async def run_case(agent: Agent, scorers: list[Scorer], case: CaseInput, cfg: Ev
         attempts=attempts,
         error=error,
         metadata=case.metadata,
+        trial=trial,
     )
 
 
@@ -171,6 +193,23 @@ def _pct(values: list[float], q: float) -> float:
     return float(s[idx])
 
 
+def _case_tags(o: CaseOutcome) -> list[str]:
+    meta = o.metadata or {}
+    tags = [str(t) for t in meta.get("tags") or []]
+    if meta.get("category"):
+        tags.append(str(meta["category"]))
+    return list(dict.fromkeys(tags))
+
+
+def _breakdown(outcomes: list[CaseOutcome], key: Callable[[CaseOutcome], list[str]]) -> dict[str, Any]:
+    groups: dict[str, list[CaseOutcome]] = {}
+    for o in outcomes:
+        for k in key(o):
+            groups.setdefault(k, []).append(o)
+    return {k: {"n": len(v), "passRate": round(sum(o.passed for o in v) / len(v), 4),
+                "avgScore": round(statistics.fmean(o.score for o in v), 4)} for k, v in sorted(groups.items())}
+
+
 def compute_metrics(outcomes: list[CaseOutcome], duration_ms: int | None = None) -> dict[str, Any]:
     n = len(outcomes)
     lat = [o.latency_ms for o in outcomes]
@@ -180,14 +219,27 @@ def compute_metrics(outcomes: list[CaseOutcome], duration_ms: int | None = None)
         for name, r in o.scores.items():
             if not r.get("skipped"):
                 scorer_vals.setdefault(name, []).append(r["score"])
-    return {
+
+    # Group repeated trials per case: case-level means feed the CIs (trials are not independent cases).
+    by_case: dict[str, list[CaseOutcome]] = {}
+    for o in outcomes:
+        by_case.setdefault(o.test_case_id, []).append(o)
+    case_scores = [statistics.fmean(x.score for x in g) for g in by_case.values()]
+    trials = max((len(g) for g in by_case.values()), default=1)
+    n_cases = len(by_case)
+    case_pass = [sum(x.passed for x in g) for g in by_case.values()]
+    metrics: dict[str, Any] = {
         "total": n,
+        "cases": n_cases,
+        "trials": trials,
         "passed": counts["PASS"],
         "partial": counts["PARTIAL"],
         "failed": counts["FAIL"],
         "errored": counts["ERROR"],
         "passRate": round(counts["PASS"] / n, 4) if n else 0.0,
+        "passRateCi": list(stats.wilson_interval(counts["PASS"], n)),
         "avgScore": round(statistics.fmean(o.score for o in outcomes), 4) if n else 0.0,
+        "avgScoreCi": list(stats.bootstrap_ci(case_scores)),
         "avgLatencyMs": round(statistics.fmean(lat), 1) if n else 0.0,
         "p50LatencyMs": _pct(lat, 0.5),
         "p95LatencyMs": _pct(lat, 0.95),
@@ -197,8 +249,18 @@ def compute_metrics(outcomes: list[CaseOutcome], duration_ms: int | None = None)
         "tokenCount": sum(o.prompt_tokens + o.completion_tokens for o in outcomes),
         "totalRetries": sum(o.attempts - 1 for o in outcomes),
         "scorerAverages": {k: round(statistics.fmean(v), 4) for k, v in sorted(scorer_vals.items())},
+        "tagBreakdown": _breakdown(outcomes, _case_tags),
+        "difficultyBreakdown": _breakdown(
+            outcomes, lambda o: [str((o.metadata or {})["difficulty"])] if (o.metadata or {}).get("difficulty") else []),
         "durationMs": duration_ms,
     }
+    if trials > 1 and n_cases:
+        sizes = [len(g) for g in by_case.values()]
+        metrics["passAtK"] = round(statistics.fmean(stats.pass_at_k(sz, c, trials) for sz, c in zip(sizes, case_pass)), 4)
+        metrics["passHatK"] = round(sum(1 for sz, c in zip(sizes, case_pass) if c == sz) / n_cases, 4)
+        metrics["consistency"] = round(
+            sum(1 for g in by_case.values() if len({x.status for x in g}) == 1) / n_cases, 4)
+    return metrics
 
 
 async def run_evaluation(
@@ -219,18 +281,20 @@ async def run_evaluation(
     lock = asyncio.Lock()
     t0 = time.perf_counter()
 
-    async def worker(case: CaseInput) -> CaseOutcome:
+    jobs = [(c, t) for t in range(config.trials) for c in cases]
+
+    async def worker(case: CaseInput, trial: int) -> CaseOutcome:
         nonlocal done
         async with sem:
-            outcome = await run_case(agent, scorers, case, config, rng)
+            outcome = await run_case(agent, scorers, case, config, rng, trial=trial)
         async with lock:
             done += 1
             if on_result is not None:
-                res = on_result(outcome, done, len(cases))
+                res = on_result(outcome, done, len(jobs))
                 if inspect.isawaitable(res):
                     await res
         return outcome
 
-    outcomes = list(await asyncio.gather(*(worker(c) for c in cases)))
+    outcomes = list(await asyncio.gather(*(worker(c, t) for c, t in jobs)))
     metrics = compute_metrics(outcomes, int((time.perf_counter() - t0) * 1000))
     return outcomes, metrics
