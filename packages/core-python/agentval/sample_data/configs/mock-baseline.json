@@ -1,0 +1,35 @@
+{
+  "name": "v1.0 baseline prompt + mock/cs-agent-v1",
+  "concurrency": 4,
+  "max_retries": 2,
+  "retry_base_delay": 0.2,
+  "pass_threshold": 0.85,
+  "partial_threshold": 0.4,
+  "scorers": [
+    {
+      "type": "exact_match",
+      "params": {
+        "field": "resolution"
+      }
+    },
+    {
+      "type": "schema_match"
+    },
+    {
+      "type": "llm_judge",
+      "weight": 2,
+      "params": {
+        "model": "mock",
+        "rubric": "Does the reply resolve the request, follow policy and keep a professional, empathetic tone?"
+      }
+    },
+    {
+      "type": "trajectory"
+    }
+  ],
+  "agent": {
+    "type": "mock",
+    "variant": "baseline",
+    "model": "mock/cs-agent-v1"
+  }
+}

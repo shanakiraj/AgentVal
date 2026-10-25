@@ -1,0 +1,55 @@
+# One-command local stack:  docker compose up --build
+#   web  -> http://localhost:3000
+#   api  -> http://localhost:8000/docs
+# Copy .env.example to .env to override defaults or add model provider keys (never commit .env).
+name: agentval
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentval}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentval}
+      POSTGRES_DB: ${POSTGRES_DB:-agentval}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./packages/core-python
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agentval}:${POSTGRES_PASSWORD:-agentval}@db:5432/${POSTGRES_DB:-agentval}
+      AGENTVAL_SEED: ${AGENTVAL_SEED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # Optional: only needed for LiteLLM agents / judges. Leave empty for the mock demo.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OLLAMA_API_BASE: ${OLLAMA_API_BASE:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: ./apps/web
+    environment:
+      # Server-side calls go over the compose network; the browser never calls the API directly.
+      API_URL: http://api:8000
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

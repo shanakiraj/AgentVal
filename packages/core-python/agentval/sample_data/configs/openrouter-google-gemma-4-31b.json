@@ -1,0 +1,43 @@
+{
+  "name": "Google Gemma 4 31B (OpenRouter free) + policy prompt v1",
+  "agent": {
+    "type": "litellm",
+    "model": "openrouter/google/gemma-4-31b-it:free",
+    "system_prompt": "You are the customer service agent for an online store. Use the provided tools to look things up and take actions; never invent order details.\n\nPolicies:\n- Order questions: call lookup_order and share the status, carrier, tracking number and ETA.\n- Refunds for damaged items: first verify the order with lookup_order, then call issue_refund. Tell the customer the amount and that refunds appear in 3-5 business days.\n- Account access: call send_password_reset with the customer's email and say a reset link was sent.\n- Address changes: check the order with lookup_order first. If it has already shipped you cannot change the address; call create_ticket with queue \"carrier_redirect\" and tell the customer the order has already shipped and give the ticket number. Resolution is \"escalated\".\n- Customers who are very upset or mention legal action: apologize, call escalate_to_human (priority \"high\") and tell them it has been escalated to a senior specialist who will contact them within 5 minutes. Resolution is \"escalated\". Never tell a customer to calm down.\n\nWhen you are done, respond with ONLY a JSON object, no prose and no code fences:\n{\"reply\": \"<message to the customer>\", \"resolution\": \"resolved\" | \"escalated\" | \"needs_info\", \"actions\": [\"<tool names you used to act>\"]}",
+    "temperature": 0,
+    "max_tokens": 1024,
+    "max_iterations": 6,
+    "call_retries": 4,
+    "retry_base_delay": 8
+  },
+  "scorers": [
+    {
+      "type": "exact_match",
+      "params": {
+        "field": "resolution"
+      }
+    },
+    {
+      "type": "schema_match"
+    },
+    {
+      "type": "llm_judge",
+      "weight": 2,
+      "params": {
+        "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+        "rubric": "Does the reply resolve the request, follow the store policies, use only facts returned by tools, and keep a professional, empathetic tone?",
+        "max_tokens": 2048
+      }
+    },
+    {
+      "type": "trajectory"
+    }
+  ],
+  "concurrency": 1,
+  "max_retries": 2,
+  "retry_base_delay": 15,
+  "retry_max_delay": 60,
+  "timeout_s": 900,
+  "pass_threshold": 0.85,
+  "partial_threshold": 0.4
+}
