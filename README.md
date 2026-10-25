@@ -18,10 +18,6 @@ It pairs an asynchronous evaluation pipeline (Python) with an interactive trace/
 cp .env.example .env        # optional; defaults work for local dev
 docker compose up --build
 ```
-
-- Studio: http://localhost:3000
-- API docs (Swagger): http://localhost:8000/docs
-
 With `AGENTVAL_SEED=true` (default in compose) the API loads the sample dataset and runs it twice
 (baseline vs. improved mock agent) on first start, so the dashboard and compare view have data immediately.
 
@@ -35,7 +31,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q                                   # scorers, runner, API, CLI
 agentval seed                               # sample dataset + two demo runs into ./agentval.db
-agentval serve --reload                     # http://127.0.0.1:8000/docs
+agentval serve --reload                     
 ```
 
 Frontend (Node 20+):
@@ -43,7 +39,7 @@ Frontend (Node 20+):
 ```bash
 cd apps/web
 npm install
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 npm run dev   # http://localhost:3000
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000 npm run dev
 ```
 
 The database defaults to SQLite (`sqlite:///./agentval.db`). Set `DATABASE_URL` to any Postgres URL
@@ -226,18 +222,6 @@ Vercel domain to `CORS_ORIGINS` (only needed for direct browser access; the stud
 API server-side), then set `NEXT_PUBLIC_API_URL` in Vercel and redeploy.
 
 Note: run progress in the studio refreshes by polling; the API also exposes an SSE stream for other clients.
-
-## Security: no secrets in git
-
-- `.gitignore` excludes `.env*` (except `.env.example`), databases, virtualenvs, `node_modules` and build output.
-- Only `.env.example` files with placeholders are committed. Provider keys are read from the environment by LiteLLM and never stored.
-- Enable the bundled pre-commit hook (requires [gitleaks](https://github.com/gitleaks/gitleaks)):
-
-  ```bash
-  git config core.hooksPath .githooks     # runs `gitleaks protect --verbose --staged` before every commit
-  ```
-
-- `docs/ci.example.yml` also runs `gitleaks detect` on every push/PR once copied into `.github/workflows/`.
 
 ## Testing
 
