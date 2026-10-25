@@ -10,41 +10,6 @@ It pairs an asynchronous evaluation pipeline (Python) with an interactive trace/
 - **Compare**: run-vs-run metric deltas and per-test-case regressions.
 - **Works offline**: a deterministic mock customer-service agent and mock judge mean the whole demo runs with **no API keys**. Real models go through [LiteLLM](https://github.com/BerriAI/litellm) (OpenAI, Anthropic, Gemini, Ollama, …).
 
-```
-                                  ┌────────────────────────┐
-                                  │   Next.js 15 (React)   │
-                                  │ App Router + Tailwind  │
-                                  │ React Flow + shadcn/ui │
-                                  └───────────┬────────────┘
-                                              │ REST API (server components / server actions)
-                                              ▼
-┌───────────────────────┐         ┌────────────────────────┐
-│      Python CLI       │────────>│    FastAPI Core API    │
-│  `agentval run`       │         │ Pydantic v2 + LiteLLM  │
-└───────────────────────┘         └───────────┬────────────┘
-                                              │ asyncio runner
-                                              ▼
-                                  ┌────────────────────────┐
-                                  │ PostgreSQL / SQLite    │
-                                  │ via SQLModel           │
-                                  └────────────────────────┘
-```
-
-## Repository layout
-
-```
-agentval/
-├── apps/web/               # Next.js 15 App Router studio (Tailwind v4, shadcn/ui, React Flow, lucide)
-├── packages/core-python/   # FastAPI server, evaluation engine, scorers, CLI (`agentval`)
-│   ├── agentval/scorers/   # ExactMatch, SchemaMatch, LLMJudge, Trajectory + registry
-│   ├── agentval/agents/    # Mock customer-service agent, LiteLLM tool agent, Agent base + TraceRecorder
-│   ├── agentval/runner.py  # async evaluation pipeline
-│   └── agentval/sample_data/  # "Customer Service Agent Evaluation" dataset + run configs
-├── docker-compose.yml      # Postgres + API + web
-├── .githooks/pre-commit    # gitleaks secret scan
-└── docs/ci.example.yml     # GitHub Actions workflow (tests, build, gitleaks)
-```
-
 ## Quick start
 
 ### Option A: Docker (one command)
