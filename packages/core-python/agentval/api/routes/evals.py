@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
@@ -107,7 +107,46 @@ async def stream_run(run_id: str, request: Request, interval: float = Query(0.5,
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/runs/{run_id}/report")
+def run_report(run_id: str, format: str = Query("md", pattern="^(md|csv|json)$"),
+               session: Session = Depends(get_session)):
+    """Download a run report as Markdown, CSV or JSON."""
+    from agentval.reports import run_csv, run_markdown
+
+    detail = service.run_detail(session, _get_run(session, run_id)).model_dump(mode="json", by_alias=True)
+    if format == "json":
+        return detail
+    body, media, ext = ((run_markdown(detail), "text/markdown", "md") if format == "md"
+                        else (run_csv(detail), "text/csv", "csv"))
+    return PlainTextResponse(body, media_type=media,
+                             headers={"Content-Disposition": f'attachment; filename="agentval-{run_id[:8]}.{ext}"'})
+
+
+def _policy(max_new_failures: int, max_score_drop: float, require_significance: bool, alpha: float):
+    from agentval.regression import GatePolicy
+
+    return GatePolicy(max_new_failures=max_new_failures, max_score_drop=max_score_drop,
+                      require_significance=require_significance, alpha=alpha)
+
+
 @router.get("/compare", response_model=schemas.CompareResponse)
 def compare(run_a: str = Query(..., alias="runA"), run_b: str = Query(..., alias="runB"),
+            max_new_failures: int = Query(0, alias="maxNewFailures", ge=0),
+            max_score_drop: float = Query(0.02, alias="maxScoreDrop", ge=0),
+            require_significance: bool = Query(False, alias="requireSignificance"),
+            alpha: float = Query(0.05, gt=0, lt=1),
             session: Session = Depends(get_session)):
-    return service.compare_runs(session, _get_run(session, run_a), _get_run(session, run_b))
+    """Metric deltas, per-case changes and a statistical regression analysis with a CI gate verdict."""
+    return service.compare_runs(session, _get_run(session, run_a), _get_run(session, run_b),
+                                _policy(max_new_failures, max_score_drop, require_significance, alpha))
+
+
+@router.get("/compare/report", response_class=PlainTextResponse)
+def compare_report(run_a: str = Query(..., alias="runA"), run_b: str = Query(..., alias="runB"),
+                   session: Session = Depends(get_session)):
+    """Markdown regression report, ready to paste into a pull-request comment."""
+    from agentval.reports import compare_markdown
+
+    a, b = _get_run(session, run_a), _get_run(session, run_b)
+    res = service.compare_runs(session, a, b)
+    return PlainTextResponse(compare_markdown(a.name, b.name, res.regression or {}), media_type="text/markdown")

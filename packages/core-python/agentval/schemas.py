@@ -71,6 +71,7 @@ class ResultRead(ApiModel):
     prompt_tokens: int
     completion_tokens: int
     attempts: int
+    trial: int = 0
     error: Optional[str] = None
 
 
@@ -121,3 +122,5 @@ class CompareResponse(ApiModel):
     metrics: list[MetricDelta]
     scorers: list[MetricDelta]
     cases: list[CaseComparison]
+    # Statistical regression analysis: summary (paired bootstrap CI, p-values, verdict) + CI gate.
+    regression: Optional[dict[str, Any]] = None

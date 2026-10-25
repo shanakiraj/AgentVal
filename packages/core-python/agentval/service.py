@@ -4,18 +4,29 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from agentval.db import session_scope
 from agentval.models import Dataset, EvalResult, EvalRun, RunStatus, TestCase, utcnow
-from agentval.runner import CaseInput, CaseOutcome, EvalConfig, run_evaluation
+from agentval.runner import CaseInput, CaseOutcome, EvalConfig, compute_metrics, run_evaluation
 from agentval import schemas
+
+if TYPE_CHECKING:
+    from agentval.regression import GatePolicy
 
 SAMPLE_DIR = Path(__file__).parent / "sample_data"
 SAMPLE_DATASET = SAMPLE_DIR / "customer_service.json"
+# Bundled benchmark suite; usable as ``agentval run --dataset <key>``.
+BUILTIN_DATASETS = {
+    "sample": str(SAMPLE_DATASET),
+    "customer-service": str(SAMPLE_DATASET),
+    "rag": str(SAMPLE_DIR / "rag_grounded_qa.json"),
+    "safety": str(SAMPLE_DIR / "safety_robustness.json"),
+    "ops": str(SAMPLE_DIR / "multi_step_ops.json"),
+}
 
 
 # ----------------------------------------------------------------------------- datasets
@@ -82,7 +93,7 @@ def create_run(session: Session, dataset_id: str, config: dict[str, Any], name: 
     n_cases = session.exec(select(func.count()).select_from(TestCase).where(TestCase.dataset_id == dataset_id)).one()
     run = EvalRun(dataset_id=dataset_id, name=cfg.name, status=RunStatus.PENDING.value,
                   model=cfg.agent.get("model") or cfg.agent.get("type"),
-                  config=cfg.model_dump(), total_cases=n_cases)
+                  config=cfg.model_dump(), total_cases=n_cases * cfg.trials)
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -96,7 +107,7 @@ def _save_outcome(run_id: str, outcome: CaseOutcome, done: int) -> None:
             trace=outcome.trace, score=outcome.score, passed=outcome.passed, status=outcome.status,
             scores=outcome.scores, latency_ms=outcome.latency_ms, cost_usd=outcome.cost_usd,
             prompt_tokens=outcome.prompt_tokens, completion_tokens=outcome.completion_tokens,
-            attempts=outcome.attempts, error=outcome.error))
+            attempts=outcome.attempts, trial=outcome.trial, error=outcome.error))
         run = s.get(EvalRun, run_id)
         if run:
             run.completed_cases = done
@@ -119,7 +130,7 @@ async def execute_run(run_id: str, progress: Callable[[CaseOutcome, int, int], N
         cfg = EvalConfig.model_validate(run.config)
         cases = [CaseInput(id=tc.id, input=tc.input, expected=tc.expected, metadata=tc.meta, name=tc.name)
                  for tc in s.exec(select(TestCase).where(TestCase.dataset_id == run.dataset_id).order_by(TestCase.position, TestCase.created_at)).all()]
-        run.status, run.started_at, run.total_cases = RunStatus.RUNNING.value, utcnow(), len(cases)
+        run.status, run.started_at, run.total_cases = RunStatus.RUNNING.value, utcnow(), len(cases) * cfg.trials
         s.add(run)
         s.commit()
 
@@ -156,13 +167,13 @@ def result_view(r: EvalResult, tc: TestCase | None, include_trace: bool = True) 
         expected=tc.expected if tc else None, actual=r.actual, trace=r.trace if include_trace else None,
         score=r.score, passed=r.passed, status=r.status, scores=r.scores, latency_ms=r.latency_ms,
         cost_usd=r.cost_usd, prompt_tokens=r.prompt_tokens, completion_tokens=r.completion_tokens,
-        attempts=r.attempts, error=r.error)
+        attempts=r.attempts, trial=r.trial, error=r.error)
 
 
 def run_detail(session: Session, run: EvalRun, include_traces: bool = True) -> schemas.RunDetail:
     rows = session.exec(
         select(EvalResult, TestCase).join(TestCase, TestCase.id == EvalResult.test_case_id)
-        .where(EvalResult.eval_run_id == run.id).order_by(TestCase.position, TestCase.created_at)).all()
+        .where(EvalResult.eval_run_id == run.id).order_by(TestCase.position, TestCase.created_at, EvalResult.trial)).all()
     return schemas.RunDetail(**run_view(session, run).model_dump(),
                              results=[result_view(r, tc, include_traces) for r, tc in rows])
 
@@ -184,46 +195,170 @@ def _delta(metric: str, a: float | None, b: float | None) -> schemas.MetricDelta
     return schemas.MetricDelta(metric=metric, a=a, b=b, delta=d, better=better)
 
 
-def compare_runs(session: Session, run_a: EvalRun, run_b: EvalRun) -> schemas.CompareResponse:
+def compare_runs(session: Session, run_a: EvalRun, run_b: EvalRun,
+                 policy: "GatePolicy | None" = None) -> schemas.CompareResponse:
+    from agentval.regression import analyze
+
     da, db = run_detail(session, run_a, False), run_detail(session, run_b, False)
     ma, mb = run_a.metrics or {}, run_b.metrics or {}
     metrics = [_delta(m, ma.get(m), mb.get(m)) for m in COMPARE_METRICS]
     scorer_names = sorted(set(ma.get("scorerAverages", {})) | set(mb.get("scorerAverages", {})))
     scorers = [_delta(n, ma.get("scorerAverages", {}).get(n), mb.get("scorerAverages", {}).get(n)) for n in scorer_names]
 
-    by_a = {r.test_case_id: r for r in da.results}
-    by_b = {r.test_case_id: r for r in db.results}
-    names = {r.test_case_id: r.test_case_name for r in [*da.results, *db.results]}
-    cases = []
-    for tc_id in list(dict.fromkeys([*by_a, *by_b])):
-        ra, rb = by_a.get(tc_id), by_b.get(tc_id)
-        if ra and rb:
-            d = round(rb.score - ra.score, 4)
-            change = "improved" if d > 1e-9 else "regressed" if d < -1e-9 else "unchanged"
-        else:
-            d, change = None, "missing"
-        cases.append(schemas.CaseComparison(
-            test_case_id=tc_id, test_case_name=names.get(tc_id), status_a=ra.status if ra else None,
-            status_b=rb.status if rb else None, score_a=ra.score if ra else None,
-            score_b=rb.score if rb else None, delta=d, change=change))
+    report = analyze(da.results, db.results, policy)
+    cases = [schemas.CaseComparison(
+        test_case_id=c["testCaseId"], test_case_name=c["testCaseName"], status_a=c["statusA"], status_b=c["statusB"],
+        score_a=c["scoreA"], score_b=c["scoreB"], delta=c["delta"], change=c["change"]) for c in report.cases]
     return schemas.CompareResponse(run_a=run_view(session, run_a), run_b=run_view(session, run_b),
-                                   metrics=metrics, scorers=scorers, cases=cases)
+                                   metrics=metrics, scorers=scorers, cases=cases,
+                                   regression={"summary": report.summary, "gate": report.gate,
+                                               "cases": report.cases})
+
+
+def recompute_metrics(session: Session, run: EvalRun) -> dict[str, Any]:
+    """Recompute run metrics from stored results (e.g. after upgrading the metrics schema)."""
+    rows = session.exec(select(EvalResult, TestCase).join(TestCase, TestCase.id == EvalResult.test_case_id)
+                        .where(EvalResult.eval_run_id == run.id)).all()
+    outcomes = [CaseOutcome(test_case_id=r.test_case_id, actual=r.actual, trace=r.trace, score=r.score,
+                            passed=r.passed, status=r.status, scores=r.scores, latency_ms=r.latency_ms,
+                            cost_usd=r.cost_usd, prompt_tokens=r.prompt_tokens, completion_tokens=r.completion_tokens,
+                            attempts=r.attempts, error=r.error, metadata=tc.meta, trial=r.trial) for r, tc in rows]
+    duration = (run.metrics or {}).get("durationMs")
+    run.metrics = compute_metrics(outcomes, duration)
+    session.add(run)
+    session.commit()
+    return run.metrics
+
+
+async def rescore_run(run_id: str, preset: str | None = None) -> EvalRun:
+    """Re-apply scorers to stored outputs and traces without re-running the agent.
+
+    Use it after improving a scorer or to add new scorers to historical runs. LLM-judge verdicts
+    already stored are reused (no new API calls); other scorers are recomputed.
+    """
+    from agentval.runner import _score_case, aggregate, apply_scorer_preset, classify
+    from agentval.scorers import ScoreResult, ScoringContext, build_scorer
+
+    with session_scope() as s:
+        run = s.get(EvalRun, run_id)
+        if run is None:
+            raise KeyError(run_id)
+        config = apply_scorer_preset(run.config, preset) if preset else run.config
+        cfg = EvalConfig.model_validate(config)
+        rows = s.exec(select(EvalResult, TestCase).join(TestCase, TestCase.id == EvalResult.test_case_id)
+                      .where(EvalResult.eval_run_id == run_id)).all()
+        specs = [sp if isinstance(sp, dict) else {"type": sp} for sp in cfg.scorers]
+        for r, tc in rows:
+            if r.error:
+                continue
+            reuse = {name: v for name, v in (r.scores or {}).items()
+                     if name == "llm_judge" and not (v.get("details") or {}).get("judge") == "mock"}
+            todo = [build_scorer(sp) for sp in specs if not (sp["type"] in reuse)]
+            ctx = ScoringContext(input=tc.input, expected=tc.expected, actual=r.actual, trace=r.trace, metadata=tc.meta)
+            fresh = await _score_case(todo, ctx)
+            kept = []
+            for sp in specs:
+                if sp["type"] in reuse:
+                    res = ScoreResult.model_validate(reuse[sp["type"]])
+                    res.weight = float(sp.get("weight", res.weight))
+                    kept.append(res)
+            results = fresh + kept
+            order = {sp["type"]: i for i, sp in enumerate(specs)}
+            results.sort(key=lambda x: order.get(x.name, 99))
+            r.score = round(aggregate(results), 4)
+            r.passed, r.status = classify(r.score, None, cfg)
+            r.scores = {x.name: x.model_dump() for x in results}
+            s.add(r)
+        run.config = cfg.model_dump()
+        s.add(run)
+        s.commit()
+        recompute_metrics(s, run)
+        s.refresh(run)
+        return run
+
+
+# ----------------------------------------------------------------------------- bundles
+def _dt(value: Any) -> Any:
+    from datetime import datetime
+
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return value
+
+
+def import_bundle(session: Session, bundle: dict[str, Any]) -> dict[str, int]:
+    """Import an ``agentval export-demo`` bundle, preserving ids (idempotent: existing ids are skipped).
+
+    This makes results portable: runs produced on one machine (e.g. a slow, rate-limited sweep of
+    free models) can be merged into another database without re-running anything.
+    """
+    counts = {"datasets": 0, "testCases": 0, "runs": 0, "results": 0}
+    for d in bundle.get("datasets", []):
+        if session.get(Dataset, d["id"]) is None:
+            session.add(Dataset(id=d["id"], name=d["name"], description=d.get("description"),
+                                created_at=_dt(d["createdAt"]), updated_at=_dt(d["updatedAt"])))
+            counts["datasets"] += 1
+        for i, tc in enumerate(d.get("testCases", [])):
+            if session.get(TestCase, tc["id"]) is None:
+                session.add(TestCase(id=tc["id"], dataset_id=d["id"], position=i, name=tc.get("name"),
+                                     input=tc["input"], expected=tc.get("expected"), meta=tc.get("metadata"),
+                                     created_at=_dt(tc["createdAt"])))
+                counts["testCases"] += 1
+    session.flush()
+    for r in bundle.get("runs", []):
+        if session.get(EvalRun, r["id"]) is not None:
+            continue
+        session.add(EvalRun(id=r["id"], dataset_id=r["datasetId"], name=r["name"], status=r["status"],
+                            model=r.get("model"), config=r.get("config") or {}, metrics=r.get("metrics"),
+                            total_cases=r.get("totalCases", 0), completed_cases=r.get("completedCases", 0),
+                            error=r.get("error"), created_at=_dt(r["createdAt"]), started_at=_dt(r.get("startedAt")),
+                            finished_at=_dt(r.get("finishedAt"))))
+        counts["runs"] += 1
+        session.flush()
+        for res in r.get("results", []):
+            session.add(EvalResult(
+                id=res["id"], eval_run_id=r["id"], test_case_id=res["testCaseId"], actual=res.get("actual"),
+                trace=res.get("trace") or {}, score=res["score"], passed=res["passed"], status=res["status"],
+                scores=res.get("scores") or {}, latency_ms=res.get("latencyMs", 0), cost_usd=res.get("costUsd", 0.0),
+                prompt_tokens=res.get("promptTokens", 0), completion_tokens=res.get("completionTokens", 0),
+                attempts=res.get("attempts", 1), error=res.get("error"), trial=res.get("trial", 0)))
+            counts["results"] += 1
+    session.commit()
+    return counts
 
 
 # ----------------------------------------------------------------------------- seed
-async def seed_sample(speed: float = 1.0) -> dict[str, Any]:
-    """Create the sample dataset and two demo runs (baseline vs improved mock agent)."""
-    with session_scope() as s:
-        ds = import_dataset_file(s, SAMPLE_DATASET)
-        ds_id = ds.id
-        existing = s.exec(select(func.count()).select_from(EvalRun).where(EvalRun.dataset_id == ds_id)).one()
-    run_ids = []
-    if not existing:
+SUITE = ("rag", "safety", "ops")
+
+
+async def seed_sample(speed: float = 1.0, suite: bool = True) -> dict[str, Any]:
+    """Create the sample dataset and two demo runs (baseline vs improved mock agent).
+
+    With ``suite`` the benchmark suite (RAG, safety, multi-step ops) is seeded too, each with a
+    baseline and an improved mock run using the full scorer preset and 3 trials per case.
+    """
+    from agentval.runner import apply_scorer_preset
+
+    plan: list[tuple[str, int, str | None]] = [(str(SAMPLE_DATASET), 1, None)]
+    if suite:
+        plan += [(BUILTIN_DATASETS[k], 3, "full") for k in SUITE]
+    dataset_ids, run_ids = [], []
+    for path, trials, preset in plan:
+        with session_scope() as s:
+            ds = import_dataset_file(s, path)
+            ds_id = ds.id
+            existing = s.exec(select(func.count()).select_from(EvalRun).where(EvalRun.dataset_id == ds_id)).one()
+        dataset_ids.append(ds_id)
+        if existing:
+            continue
         for cfg_name in ("mock-baseline", "mock-improved"):
             cfg = json.loads((SAMPLE_DIR / "configs" / f"{cfg_name}.json").read_text())
             cfg["agent"]["speed"] = speed
+            cfg["trials"] = trials
+            if preset:
+                cfg = apply_scorer_preset(cfg, preset)
             with session_scope() as s:
                 run = create_run(s, ds_id, cfg)
                 run_ids.append(run.id)
             await execute_run(run.id)
-    return {"datasetId": ds_id, "runIds": run_ids}
+    return {"datasetId": dataset_ids[0], "datasetIds": dataset_ids, "runIds": run_ids}

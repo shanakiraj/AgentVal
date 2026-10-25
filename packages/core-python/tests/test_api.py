@@ -95,6 +95,19 @@ def test_run_lifecycle_and_compare(client, sample_dataset):
     assert pass_rate["better"] == "b" and pass_rate["delta"] > 0
     assert any(c["change"] == "improved" for c in cmp["cases"])
     assert len(cmp["cases"]) == 5
+    reg = cmp["regression"]
+    assert reg["summary"]["newPasses"] >= 1 and reg["gate"]["passed"] is True
+    assert reg["summary"]["verdict"] in {"improvement", "possible_improvement"}
+    back = client.get(f"/api/v1/evals/compare?runA={b_id}&runB={a['id']}&maxScoreDrop=0.5").json()
+    assert back["regression"]["gate"]["passed"] is False  # pass->fail flips still fail the gate
+    md = client.get(f"/api/v1/evals/compare/report?runA={a['id']}&runB={b_id}")
+    assert md.status_code == 200 and "regression check: PASSED" in md.text
+
+    rep = client.get(f"/api/v1/evals/runs/{a['id']}/report?format=md")
+    assert rep.headers["content-type"].startswith("text/markdown") and "# AgentVal report" in rep.text
+    csv_rep = client.get(f"/api/v1/evals/runs/{a['id']}/report?format=csv")
+    assert csv_rep.text.splitlines()[0].startswith("test_case,trial,status") and len(csv_rep.text.splitlines()) == 6
+    assert client.get(f"/api/v1/evals/runs/{a['id']}/report?format=xml").status_code == 422
 
     stream = client.get(f"/api/v1/evals/runs/{b_id}/stream")
     assert stream.headers["content-type"].startswith("text/event-stream")
